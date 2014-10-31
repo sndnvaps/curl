@@ -1248,7 +1248,7 @@ else
 fi
 if test x"$want_gss" = xyes; then
   AC_DEFINE(HAVE_GSSAPI, 1, [if you have GSS-API libraries])
-
+  HAVE_GSSAPI=1
   curl_gss_msg="enabled (MIT Kerberos/Heimdal)"
 
   if test -n "$gnu_gss"; then
@@ -1259,12 +1259,6 @@ if test x"$want_gss" = xyes; then
      case $host in
      *-*-darwin*)
         LIBS="-lgssapi_krb5 -lresolv $LIBS"
-        ;;
-     *-hp-hpux*)
-        if test "$GSSAPI_ROOT" != "yes"; then
-           LDFLAGS="$LDFLAGS -L$GSSAPI_ROOT/lib$libsuff"
-        fi
-        LIBS="-lgss $LIBS"
         ;;
      *)
         if test -n "$host_alias" -a -f "$GSSAPI_ROOT/bin/$host_alias-krb5-config"; then
@@ -1277,11 +1271,22 @@ if test x"$want_gss" = xyes; then
            dnl into LIBS
            gss_libs=`$GSSAPI_ROOT/bin/krb5-config --libs gssapi`
            LIBS="$gss_libs $LIBS"
-        elif test "$GSSAPI_ROOT" != "yes"; then
-           LDFLAGS="$LDFLAGS -L$GSSAPI_ROOT/lib$libsuff"
-           LIBS="-lgssapi $LIBS"
         else
-           LIBS="-lgssapi $LIBS"
+           case $host in
+           *-hp-hpux*)
+              gss_libname="gss"
+              ;;
+           *)
+              gss_libname="gssapi"
+              ;;
+           esac
+
+           if test "$GSSAPI_ROOT" != "yes"; then
+              LDFLAGS="$LDFLAGS -L$GSSAPI_ROOT/lib$libsuff"
+              LIBS="-l$gss_libname $LIBS"
+           else
+              LIBS="-l$gss_libname $LIBS"
+           fi
         fi
         ;;
      esac
@@ -1565,10 +1570,7 @@ if test "$curl_ssl_msg" = "$init_ssl_msg" && test X"$OPT_SSL" != Xno; then
                     ENGINE_cleanup \
                     CRYPTO_cleanup_all_ex_data \
                     SSL_get_shutdown \
-                    SSLv2_client_method \
-                    SSL_CTX_set_next_proto_select_cb \
-                    SSL_CTX_set_alpn_protos \
-                    SSL_CTX_set_alpn_select_cb )
+                    SSLv2_client_method )
 
     dnl Make an attempt to detect if this is actually yassl's headers and
     dnl OpenSSL emulation layer. We still leave everything else believing
@@ -2077,6 +2079,10 @@ if test "$curl_ssl_msg" = "$init_ssl_msg"; then
 
       if test "x$USE_NSS" = "xyes"; then
         AC_MSG_NOTICE([detected NSS version $version])
+
+        dnl needed when linking the curl tool without USE_EXPLICIT_LIB_DEPS
+        NSS_LIBS=$addlib
+        AC_SUBST([NSS_LIBS])
 
         dnl when shared libs were found in a path that the run-time
         dnl linker doesn't search through, we need to add it to
@@ -2751,7 +2757,7 @@ if test X"$want_h2" != Xno; then
     CPPFLAGS="$CPPFLAGS $CPP_H2"
     LIBS="$LIB_H2 $LIBS"
 
-    AC_CHECK_LIB(nghttp2, nghttp2_session_client_new,
+    AC_CHECK_LIB(nghttp2, nghttp2_session_callbacks_set_send_callback,
       [
        AC_CHECK_HEADERS(nghttp2/nghttp2.h,
           curl_h2_msg="enabled (nghttp2)"
@@ -3352,8 +3358,18 @@ fi
 if test "x$USE_WINDOWS_SSPI" = "x1"; then
   SUPPORT_FEATURES="$SUPPORT_FEATURES SSPI"
 fi
+
+if test "x$HAVE_GSSAPI" = "x1"; then
+  SUPPORT_FEATURES="$SUPPORT_FEATURES GSS-API"
+fi
+
+if test "x$CURL_DISABLE_CRYPTO_AUTH" != "x1" -a \
+    \( "x$HAVE_GSSAPI" = "x1" -o "x$USE_WINDOWS_SSPI" = "x1" \); then
+  SUPPORT_FEATURES="$SUPPORT_FEATURES SPNEGO"
+fi
+
 if test "x$CURL_DISABLE_HTTP" != "x1" -a \
-	"x$CURL_DISABLE_CRYPTO_AUTH" != "x1"; then
+    "x$CURL_DISABLE_CRYPTO_AUTH" != "x1"; then
   if test "x$USE_SSLEAY" = "x1" -o "x$USE_WINDOWS_SSPI" = "x1" \
       -o "x$GNUTLS_ENABLED" = "x1" -o "x$NSS_ENABLED" = "x1" \
       -o "x$DARWINSSL_ENABLED" = "x1"; then
@@ -3369,9 +3385,6 @@ fi
 
 if test "x$USE_NGHTTP2" = "x1"; then
   SUPPORT_FEATURES="$SUPPORT_FEATURES HTTP2"
-fi
-if test "x$want_gss" = "xyes"; then
-  SUPPORT_FEATURES="$SUPPORT_FEATURES GSS-API"
 fi
 
 AC_SUBST(SUPPORT_FEATURES)

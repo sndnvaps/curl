@@ -24,7 +24,7 @@
 
 #include <curl/curl.h>
 
-#if !defined(CURL_DISABLE_HTTP) || defined(USE_SSLEAY)
+#ifndef CURL_DISABLE_HTTP
 
 #if defined(HAVE_LIBGEN_H) && defined(HAVE_BASENAME)
 #include <libgen.h>
@@ -42,10 +42,6 @@
 
 /* The last #include file should be: */
 #include "memdebug.h"
-
-#endif  /* !defined(CURL_DISABLE_HTTP) || defined(USE_SSLEAY) */
-
-#ifndef CURL_DISABLE_HTTP
 
 #ifndef HAVE_BASENAME
 static char *Curl_basename(char *path);
@@ -693,7 +689,7 @@ CURLFORMcode FormAdd(struct curl_httppost **httppost,
         }
         if(!(form->flags & (HTTPPOST_FILENAME | HTTPPOST_READFILE |
                             HTTPPOST_PTRCONTENTS | HTTPPOST_PTRBUFFER |
-                            HTTPPOST_CALLBACK)) ) {
+                            HTTPPOST_CALLBACK)) && form->value) {
           /* copy value (without strdup; possibly contains null characters) */
           form->value = memdup(form->value, form->contentslength);
           if(!form->value) {
@@ -954,13 +950,13 @@ void Curl_formclean(struct FormData **form_ptr)
 int curl_formget(struct curl_httppost *form, void *arg,
                  curl_formget_callback append)
 {
-  CURLcode rc;
+  CURLcode result;
   curl_off_t size;
   struct FormData *data, *ptr;
 
-  rc = Curl_getformdata(NULL, &data, form, NULL, &size);
-  if(rc != CURLE_OK)
-    return (int)rc;
+  result = Curl_getformdata(NULL, &data, form, NULL, &size);
+  if(result)
+    return (int)result;
 
   for(ptr = data; ptr; ptr = ptr->next) {
     if((ptr->type == FORM_FILE) || (ptr->type == FORM_CALLBACK)) {
@@ -1369,10 +1365,8 @@ CURLcode Curl_getformdata(struct SessionHandle *data,
   } while((post = post->next) != NULL); /* for each field */
 
   /* end-boundary for everything */
-  if(CURLE_OK == result)
-    result = AddFormDataf(&form, &size,
-                          "\r\n--%s--\r\n",
-                          boundary);
+  if(!result)
+    result = AddFormDataf(&form, &size, "\r\n--%s--\r\n", boundary);
 
   if(result) {
     Curl_formclean(&firstform);

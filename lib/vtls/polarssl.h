@@ -8,6 +8,7 @@
  *                             \___|\___/|_| \_\_____|
  *
  * Copyright (C) 2010, Hoi-Ho Chan, <hoiho.chan@gmail.com>
+ * Copyright (C) 2014, Daniel Stenberg, <daniel@haxx.se>, et al.
  *
  * This software is licensed as described in the file COPYING, which
  * you should have received as part of this distribution. The terms
@@ -47,6 +48,9 @@ void Curl_polarssl_session_free(void *ptr);
 size_t Curl_polarssl_version(char *buffer, size_t size);
 int Curl_polarssl_shutdown(struct connectdata *conn, int sockindex);
 
+/* this backend supports the CAPATH option */
+#define have_curlssl_ca_path 1
+
 /* API setup for PolarSSL */
 #define curlssl_init() polarssl_init()
 #define curlssl_cleanup() polarssl_cleanup()
@@ -62,6 +66,12 @@ int Curl_polarssl_shutdown(struct connectdata *conn, int sockindex);
 #define curlssl_version Curl_polarssl_version
 #define curlssl_check_cxn(x) (x=x, -1)
 #define curlssl_data_pending(x,y) (x=x, y=y, 0)
+#define CURL_SSL_BACKEND CURLSSLBACKEND_POLARSSL
+
+/* This might cause libcurl to use a weeker random!
+   TODO: implement proper use of Polarssl's CTR-DRBG or HMAC-DRBG and use that
+*/
+#define curlssl_random(x,y,z) (x=x, y=y, z=z, CURLE_NOT_BUILT_IN)
 
 #endif /* USE_POLARSSL */
 #endif /* HEADER_CURL_POLARSSL_H */

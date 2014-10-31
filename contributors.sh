@@ -34,17 +34,19 @@ fi
 
 # filter out Author:, Commit: and *by: lines
 # cut off the email parts
+# split list of names at comma
 # cut off spaces first and last on the line
 # only count names with a space (ie more than one word)
 # sort all unique names
 # awk them into RELEASE-NOTES format
 git log $start..HEAD | \
-egrep '(Author|Commit|by):' | \
+egrep -i '(Author|Commit|by):' | \
 cut -d: -f2- | \
 cut '-d<' -f1 | \
+tr , '\012' | \
 sed -e 's/^ //' -e 's/ $//g' | \
 grep ' ' | \
-sort -u |
+sort -fu |
 awk '{
  num++;
  n = sprintf("%s%s%s,", n, length(n)?" ":"", $0);

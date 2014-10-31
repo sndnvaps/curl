@@ -5,7 +5,7 @@
  *                            | (__| |_| |  _ <| |___
  *                             \___|\___/|_| \_\_____|
  *
- * Copyright (C) 1998 - 2013, Daniel Stenberg, <daniel@haxx.se>, et al.
+ * Copyright (C) 1998 - 2014, Daniel Stenberg, <daniel@haxx.se>, et al.
  *
  * This software is licensed as described in the file COPYING, which
  * you should have received as part of this distribution. The terms
@@ -23,12 +23,13 @@
 #include "curl_setup.h"
 
 #ifdef HAVE_GSSAPI
+
+#if !defined(CURL_DISABLE_HTTP) && defined(USE_SPNEGO)
+
 #ifdef HAVE_OLD_GSSMIT
 #define GSS_C_NT_HOSTBASED_SERVICE gss_nt_service_name
 #define NCOMPAT 1
 #endif
-
-#ifndef CURL_DISABLE_HTTP
 
 #include "urldata.h"
 #include "sendf.h"
@@ -48,24 +49,10 @@
 static int
 get_gss_name(struct connectdata *conn, bool proxy, gss_name_t *server)
 {
-  struct negotiatedata *neg_ctx = proxy?&conn->data->state.proxyneg:
-    &conn->data->state.negotiate;
   OM_uint32 major_status, minor_status;
   gss_buffer_desc token = GSS_C_EMPTY_BUFFER;
   char name[2048];
-  const char* service;
-
-  /* GSSAPI implementation by Globus (known as GSI) requires the name to be
-     of form "<service>/<fqdn>" instead of <service>@<fqdn> (ie. slash instead
-     of at-sign). Also GSI servers are often identified as 'host' not 'khttp'.
-     Change following lines if you want to use GSI */
-
-  /* IIS uses the <service>@<fqdn> form but uses 'http' as the service name */
-
-  if(neg_ctx->gss)
-    service = "KHTTP";
-  else
-    service = "HTTP";
+  const char* service = "HTTP";
 
   token.length = strlen(service) + 1 + strlen(proxy ? conn->proxy.name :
                                               conn->host.name) + 1;
@@ -128,30 +115,7 @@ int Curl_input_negotiate(struct connectdata *conn, bool proxy,
   int ret;
   size_t len;
   size_t rawlen = 0;
-  bool gss;
-  const char* protocol;
-  CURLcode error;
-
-  if(checkprefix("GSS-Negotiate", header)) {
-    protocol = "GSS-Negotiate";
-    gss = TRUE;
-  }
-  else if(checkprefix("Negotiate", header)) {
-    protocol = "Negotiate";
-    gss = FALSE;
-  }
-  else
-    return -1;
-
-  if(neg_ctx->context) {
-    if(neg_ctx->gss != gss) {
-      return -1;
-    }
-  }
-  else {
-    neg_ctx->protocol = protocol;
-    neg_ctx->gss = gss;
-  }
+  CURLcode result;
 
   if(neg_ctx->context && neg_ctx->status == GSS_S_COMPLETE) {
     /* We finished successfully our part of authentication, but server
@@ -165,15 +129,15 @@ int Curl_input_negotiate(struct connectdata *conn, bool proxy,
       (ret = get_gss_name(conn, proxy, &neg_ctx->server_name)))
     return ret;
 
-  header += strlen(neg_ctx->protocol);
+  header += strlen("Negotiate");
   while(*header && ISSPACE(*header))
     header++;
 
   len = strlen(header);
   if(len > 0) {
-    error = Curl_base64_decode(header,
-                               (unsigned char **)&input_token.value, &rawlen);
-    if(error || rawlen == 0)
+    result = Curl_base64_decode(header, (unsigned char **)&input_token.value,
+                                &rawlen);
+    if(result || rawlen == 0)
       return -1;
     input_token.length = rawlen;
 
@@ -184,7 +148,7 @@ int Curl_input_negotiate(struct connectdata *conn, bool proxy,
                                            &minor_status,
                                            &neg_ctx->context,
                                            neg_ctx->server_name,
-                                           TRUE,
+                                           &Curl_spnego_mech_oid,
                                            GSS_C_NO_CHANNEL_BINDINGS,
                                            &input_token,
                                            &output_token,
@@ -217,18 +181,18 @@ CURLcode Curl_output_negotiate(struct connectdata *conn, bool proxy)
   char *encoded = NULL;
   size_t len = 0;
   char *userp;
-  CURLcode error;
+  CURLcode result;
   OM_uint32 discard_st;
 
-  error = Curl_base64_encode(conn->data,
-                             neg_ctx->output_token.value,
-                             neg_ctx->output_token.length,
-                             &encoded, &len);
-  if(error) {
+  result = Curl_base64_encode(conn->data,
+                              neg_ctx->output_token.value,
+                              neg_ctx->output_token.length,
+                              &encoded, &len);
+  if(result) {
     gss_release_buffer(&discard_st, &neg_ctx->output_token);
     neg_ctx->output_token.value = NULL;
     neg_ctx->output_token.length = 0;
-    return error;
+    return result;
   }
 
   if(!encoded || !len) {
@@ -238,8 +202,8 @@ CURLcode Curl_output_negotiate(struct connectdata *conn, bool proxy)
     return CURLE_REMOTE_ACCESS_DENIED;
   }
 
-  userp = aprintf("%sAuthorization: %s %s\r\n", proxy ? "Proxy-" : "",
-                  neg_ctx->protocol, encoded);
+  userp = aprintf("%sAuthorization: Negotiate %s\r\n", proxy ? "Proxy-" : "",
+                  encoded);
   if(proxy) {
     Curl_safefree(conn->allocptr.proxyuserpwd);
     conn->allocptr.proxyuserpwd = userp;
@@ -275,6 +239,6 @@ void Curl_cleanup_negotiate(struct SessionHandle *data)
   cleanup(&data->state.proxyneg);
 }
 
+#endif /* !CURL_DISABLE_HTTP && USE_SPNEGO */
 
-#endif
-#endif
+#endif /* HAVE_GSSAPI */

@@ -448,7 +448,7 @@ static CURLcode nss_cache_crl(SECItem *crl_der)
     /* CRL already cached */
     SEC_DestroyCrl(crl);
     SECITEM_FreeItem(crl_der, PR_TRUE);
-    return CURLE_SSL_CRL_BADFILE;
+    return CURLE_OK;
   }
 
   /* acquire lock before call of CERT_CacheCRL() and accessing nss_crl_list */
@@ -935,36 +935,6 @@ static SECStatus SelectClientCert(void *arg, PRFileDesc *sock,
   return SECSuccess;
 }
 
-/* This function is supposed to decide, which error codes should be used
- * to conclude server is TLS intolerant.
- *
- * taken from xulrunner - nsNSSIOLayer.cpp
- */
-static PRBool
-isTLSIntoleranceError(PRInt32 err)
-{
-  switch (err) {
-  case SSL_ERROR_BAD_MAC_ALERT:
-  case SSL_ERROR_BAD_MAC_READ:
-  case SSL_ERROR_HANDSHAKE_FAILURE_ALERT:
-  case SSL_ERROR_HANDSHAKE_UNEXPECTED_ALERT:
-  case SSL_ERROR_CLIENT_KEY_EXCHANGE_FAILURE:
-  case SSL_ERROR_ILLEGAL_PARAMETER_ALERT:
-  case SSL_ERROR_NO_CYPHER_OVERLAP:
-  case SSL_ERROR_BAD_SERVER:
-  case SSL_ERROR_BAD_BLOCK_PADDING:
-  case SSL_ERROR_UNSUPPORTED_VERSION:
-  case SSL_ERROR_PROTOCOL_VERSION_ALERT:
-  case SSL_ERROR_RX_MALFORMED_FINISHED:
-  case SSL_ERROR_BAD_HANDSHAKE_HASH_VALUE:
-  case SSL_ERROR_DECODE_ERROR_ALERT:
-  case SSL_ERROR_RX_UNKNOWN_ALERT:
-    return PR_TRUE;
-  default:
-    return PR_FALSE;
-  }
-}
-
 /* update blocking direction in case of PR_WOULD_BLOCK_ERROR */
 static void nss_update_connecting_state(ssl_connect_state state, void *secret)
 {
@@ -1030,8 +1000,7 @@ static CURLcode nss_init_core(struct SessionHandle *data, const char *cert_dir)
   initparams.length = sizeof(initparams);
 
   if(cert_dir) {
-    const bool use_sql = NSS_VersionCheck("3.12.0");
-    char *certpath = aprintf("%s%s", use_sql ? "sql:" : "", cert_dir);
+    char *certpath = aprintf("sql:%s", cert_dir);
     if(!certpath)
       return CURLE_OUT_OF_MEMORY;
 
@@ -1346,15 +1315,8 @@ static CURLcode nss_init_sslver(SSLVersionRange *sslver,
   switch (data->set.ssl.version) {
   default:
   case CURL_SSLVERSION_DEFAULT:
-    sslver->min = SSL_LIBRARY_VERSION_3_0;
-    if(data->state.ssl_connect_retry) {
-      infof(data, "TLS disabled due to previous handshake failure\n");
-      sslver->max = SSL_LIBRARY_VERSION_3_0;
-      return CURLE_OK;
-    }
-  /* intentional fall-through to default to highest TLS version if possible */
-
   case CURL_SSLVERSION_TLSv1:
+    sslver->min = SSL_LIBRARY_VERSION_TLS_1_0;
 #ifdef SSL_LIBRARY_VERSION_TLS_1_2
     sslver->max = SSL_LIBRARY_VERSION_TLS_1_2;
 #elif defined SSL_LIBRARY_VERSION_TLS_1_1
@@ -1404,11 +1366,7 @@ static CURLcode nss_fail_connect(struct ssl_connect_data *connssl,
                                  struct SessionHandle *data,
                                  CURLcode curlerr)
 {
-  SSLVersionRange sslver;
   PRErrorCode err = 0;
-
-  /* reset the flag to avoid an infinite loop */
-  data->state.ssl_connect_retry = FALSE;
 
   if(is_nss_error(curlerr)) {
     /* read NSPR error code */
@@ -1426,18 +1384,6 @@ static CURLcode nss_fail_connect(struct ssl_connect_data *connssl,
   /* cleanup on connection failure */
   Curl_llist_destroy(connssl->obj_list, NULL);
   connssl->obj_list = NULL;
-
-  if(connssl->handle
-      && (SSL_VersionRangeGet(connssl->handle, &sslver) == SECSuccess)
-      && (sslver.min == SSL_LIBRARY_VERSION_3_0)
-      && (sslver.max != SSL_LIBRARY_VERSION_3_0)
-      && isTLSIntoleranceError(err)) {
-    /* schedule reconnect through Curl_retry_request() */
-    data->state.ssl_connect_retry = TRUE;
-    infof(data, "Error in TLS handshake, trying SSLv3...\n");
-    return CURLE_OK;
-  }
-
   return curlerr;
 }
 
@@ -1482,9 +1428,6 @@ static CURLcode nss_setup_connect(struct connectdata *conn, int sockindex)
 #endif
 #endif
 
-
-  if(connssl->state == ssl_connection_complete)
-    return CURLE_OK;
 
   connssl->data = data;
 
@@ -1560,9 +1503,6 @@ static CURLcode nss_setup_connect(struct connectdata *conn, int sockindex)
   if(ssl_cbc_random_iv)
     infof(data, "warning: support for SSL_CBC_RANDOM_IV not compiled in\n");
 #endif
-
-  /* reset the flag to avoid an infinite loop */
-  data->state.ssl_connect_retry = FALSE;
 
   if(data->set.ssl.cipher_list) {
     if(set_ciphers(data, model, data->set.ssl.cipher_list) != SECSuccess) {
@@ -1750,10 +1690,6 @@ static CURLcode nss_do_connect(struct connectdata *conn, int sockindex)
     goto error;
   }
 
-  connssl->state = ssl_connection_complete;
-  conn->recv[sockindex] = nss_recv;
-  conn->send[sockindex] = nss_send;
-
   display_conn_info(conn, connssl->handle);
 
   if(data->set.str[STRING_SSL_ISSUERCERT]) {
@@ -1788,6 +1724,9 @@ static CURLcode nss_connect_common(struct connectdata *conn, int sockindex,
   struct SessionHandle *data = conn->data;
   const bool blocking = (done == NULL);
   CURLcode rv;
+
+  if(connssl->state == ssl_connection_complete)
+    return CURLE_OK;
 
   if(connssl->connecting_state == ssl_connect_1) {
     rv = nss_setup_connect(conn, sockindex);
@@ -1828,7 +1767,12 @@ static CURLcode nss_connect_common(struct connectdata *conn, int sockindex,
     /* signal completed SSL handshake */
     *done = TRUE;
 
-  connssl->connecting_state = ssl_connect_done;
+  connssl->state = ssl_connection_complete;
+  conn->recv[sockindex] = nss_recv;
+  conn->send[sockindex] = nss_send;
+
+  /* ssl_connect_done is never used outside, go back to the initial state */
+  connssl->connecting_state = ssl_connect_1;
   return CURLE_OK;
 }
 
@@ -1914,16 +1858,19 @@ int Curl_nss_seed(struct SessionHandle *data)
   return !!Curl_nss_force_init(data);
 }
 
-void Curl_nss_random(struct SessionHandle *data,
-                     unsigned char *entropy,
-                     size_t length)
+/* data might be NULL */
+int Curl_nss_random(struct SessionHandle *data,
+                    unsigned char *entropy,
+                    size_t length)
 {
-  Curl_nss_seed(data);  /* Initiate the seed if not already done */
+  if(data)
+    Curl_nss_seed(data);  /* Initiate the seed if not already done */
   if(SECSuccess != PK11_GenerateRandom(entropy, curlx_uztosi(length))) {
     /* no way to signal a failure from here, we have to abort */
     failf(data, "PK11_GenerateRandom() failed, calling abort()...");
     abort();
   }
+  return 0;
 }
 
 void Curl_nss_md5sum(unsigned char *tmp, /* input */

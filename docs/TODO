@@ -33,6 +33,8 @@
  4.3 Earlier bad letter detection
  4.4 REST for large files
  4.5 ASCII support
+ 4.6 GSSAPI via Windows SSPI
+ 4.7 STAT for LIST without data connection
 
  5. HTTP
  5.1 Better persistency for HTTP 1.0
@@ -40,6 +42,7 @@
  5.3 Rearrange request header order
  5.4 SPDY
  5.5 auth= in URLs
+ 5.6 Digest via Windows SSPI
 
  6. TELNET
  6.1 ditch stdin
@@ -80,6 +83,7 @@
 
  14. SASL
  14.1 Other authentication mechanisms
+ 14.2 GSSAPI via GSS-API libraries
  
  15. Client
  15.1 sync
@@ -251,6 +255,20 @@
  FTP ASCII transfers do not follow RFC959. They don't convert the data
  accordingly.
 
+4.6 GSSAPI via Windows SSPI
+
+In addition to currently supporting the SASL GSSAPI mechanism (Kerberos V5)
+via third-party GSS-API libraries, such as Heimdal or MIT Kerberos, also add
+support for GSSAPI authentication via Windows SSPI.
+
+4.7 STAT for LIST without data connection
+
+Some FTP servers allow STAT for listing directories instead of using LIST, and
+the response is then sent over the control connection instead of as the
+otherwise usedw data connection: http://www.nsftools.com/tips/RawFTP.htm#STAT
+
+This is not detailed in any FTP specification.
+
 5. HTTP
 
 5.1 Better persistency for HTTP 1.0
@@ -295,6 +313,12 @@
  test:pass;auth=NTLM or --user test:pass --ntlm from the command line. 
 
  Additionally this should be implemented for proxy base URLs as well.
+
+5.6 Digest via Windows SSPI
+
+ libcurl already supports HTTP Digest Authentication via native routines as well
+ as SASL Digest via both Windows SSPI and native routines. In addition to this
+ libcurl should also support HTTP Digest Authentication via Windows SSPI.
 
 6. TELNET
 
@@ -440,7 +464,13 @@ to provide the data to send.
 
 14.1 Other authentication mechanisms
 
- Add support for GSSAPI to SMTP, POP3 and IMAP.
+ Add support for other authentication mechanisms such as EXTERNAL, OLP,
+ GSS-SPNEGO and others.
+ 
+14.2 GSSAPI via GSS-API libraries
+
+ Add support for GSSAPI authentication via third-party GSS-API libraries, such
+ as Heimdal and MIT Kerberos.
 
 15. Client
 
